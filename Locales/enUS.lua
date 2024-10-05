@@ -352,6 +352,13 @@ L["Loads all the carbonite quest data between player level - level threshold to 
 L["Level Threshold"] = true
 L["Levels under player level to load quest data on reload"] = true
 
+L["BONUS TASKS"] = "BONUS TASKS"
+L["WORLD QUESTS"] = "WORLD QUESTS"
+L["Emissaries"] = "Emissaries"
+L["Scenario: "] = "Scenario: "
+L["Stage "] = "Stage "
+L["Complete"] = "Complete"
+
 -- Keybinds
 L["Carbonite Quests"] = "Carbonite Quests"
 L["NxTOGGLEWATCHMINI"] = "QuestWatchlist mini/maximize"

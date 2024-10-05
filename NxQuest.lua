@@ -7929,6 +7929,7 @@ function Nx.Quest:HandleWorldQuestClick(map, x, y, questId)
 end
 
 
+
 function Nx.Quest:IconOnEnter(frm)
     local i = frm.NXType - 9000
     local cur = frm.NXData
@@ -8792,718 +8793,758 @@ end
 function Nx.Quest.Watch:UpdateList()
   --	Nx.prt ("QWatchUpdate")
   
+  self:InitializeVariables()
+  
+  local list = self.List
+  local oldw, oldh = list:GetSize()
+  local clearlist = checkWatchTimer()
+  
+  if clearlist then
+    self:ResetList()
+  end
+  
+  local watched = wipe(self.Watched)
+  local curq = Nx.Quest.CurQ
+  
+  if curq then
+    watched = self:ProcessCurrentQuests(curq, watched)
+    self:HandleAutoTargeting(watched, curq)
+    self:HandleEmissaries(list)
+    self:UpdateListDisplay(list, watched, clearlist)
+  end
+  
+  self:AdjustWindowSize(oldw, oldh)
+  return watched
+end
+
+function Nx.Quest.Watch:InitializeVariables()
   local Nx = Nx
   local Quest = Nx.Quest
   local Map = Nx.Map
-  local map = Map:GetMap(1)
-  local qopts = Nx.Quest:GetQuestOpts()
-  local hideBfAEmmissaries = qopts["NXWHideBfAEmmissaries"]
-  local hideLegionEmmissaries = qopts["NXWHideLegionEmmissaries"]
-  local hideUnfinished = qopts["NXWHideUnfinished"]
-  local hideGroup = qopts["NXWHideGroup"]
-  local hideNotInZone = qopts["NXWHideNotInZone"]
-  local hideNotInCont = qopts["NXWHideNotInCont"]
+  local qopts = Quest:GetQuestOpts()
+  
+  self.hideBfAEmmissaries = qopts["NXWHideBfAEmmissaries"]
+  self.hideLegionEmmissaries = qopts["NXWHideLegionEmmissaries"]
+  self.hideUnfinished = qopts["NXWHideUnfinished"]
+  self.hideGroup = qopts["NXWHideGroup"]
+  self.hideNotInZone = qopts["NXWHideNotInZone"]
+  self.hideNotInCont = qopts["NXWHideNotInCont"]
   local hideDist = qopts["NXWHideDist"] >= 19900 and 99999 or qopts["NXWHideDist"]
-  local hideDist = hideDist / 4.575		-- Convert to world units
-  local priDist = qopts.NXWPriDist
+  self.hideDist = hideDist / 4.575 -- Convert to world units
+  self.priDist = qopts.NXWPriDist
+  
+  self.gopts = self.GOpts
+  self.fixedSize = Nx.qdb.profile.QuestWatch.FixedSize
+  self.showDist = Nx.qdb.profile.QuestWatch.ShowDist
+  self.showPerColor = Nx.qdb.profile.QuestWatch.ShowPerColor
+  self.hideDoneObj = Nx.qdb.profile.QuestWatch.HideDoneObj
+  
+  self.compColor = Quest.Cols["compColor"]
+  self.incompColor = Quest.Cols["incompColor"]
+  self.oCompColor = Quest.Cols["oCompColor"]
+  self.oIncompColor = Quest.Cols["oIncompColor"]
+end
 
-  local gopts = self.GOpts
-
-  local fixedSize = Nx.qdb.profile.QuestWatch.FixedSize
-  local showDist = Nx.qdb.profile.QuestWatch.ShowDist
-  local showPerColor = Nx.qdb.profile.QuestWatch.ShowPerColor
-  local hideDoneObj = Nx.qdb.profile.QuestWatch.HideDoneObj
-
-  local compColor = Nx.Quest.Cols["compColor"]
-  local incompColor = Nx.Quest.Cols["incompColor"]
-  local oCompColor = Nx.Quest.Cols["oCompColor"]
-  local oIncompColor = Nx.Quest.Cols["oIncompColor"]
-
-  -- List
-
+function Nx.Quest.Watch:ResetList()
   local list = self.List
+  local Quest = Nx.Quest
+  list:SetBGColor(Quest.Cols["BGColorR"], Quest.Cols["BGColorG"], Quest.Cols["BGColorB"], Quest.Cols["BGColorA"])
+  list:Empty()
+end
 
-  local oldw, oldh = list:GetSize()
+function Nx.Quest.Watch:ProcessCurrentQuests(curq, watched)
+  for n, cur in ipairs(curq) do
+    local qId = cur.QId
+    local id = qId > 0 and qId or cur.Title
+    local qStatus = Nx.Quest:GetQuest(id)
+    local qWatched = qStatus == "W" or cur.PartyDesc
 
-  local clearlist = checkWatchTimer()
+    if qWatched and (cur.Distance < self.hideDist or cur.Distance > 999999) then
+      if (not self.hideUnfinished or cur.CompleteMerge) and
+         (not self.hideGroup or cur.PartySize < 5) and
+         (not self.hideNotInZone or cur.InZone) and
+         (not self.hideNotInCont or cur.InCont) then
 
-  if clearlist then
-    list:SetBGColor (Nx.Quest.Cols["BGColorR"], Nx.Quest.Cols["BGColorG"], Nx.Quest.Cols["BGColorB"], Nx.Quest.Cols["BGColorA"])
-    list:Empty()
+        local d = max(cur.Distance * self.priDist * cur.Priority * 10 + cur.Priority * 100, 0)
+        d = cur.HighPri and 0 or d
+        d = floor(d) * 256 + n
+        tinsert(watched, d)
+      end
+    end
   end
-  local watched = wipe (self.Watched)
-  local curq = Quest.CurQ
+  sort(watched)
+  return watched
+end
 
-  if curq then
-    for n, cur in ipairs (curq) do
-      local qId = cur.QId
-      local id = qId > 0 and qId or cur.Title
-      local qStatus = Nx.Quest:GetQuest (id)
-      local qWatched = qStatus == "W" or cur.PartyDesc
+function Nx.Quest.Watch:HandleAutoTargeting(watched, curq)
+  local disti = watched[1]
+  if self.ButATarget:GetPressed() and disti then
+    local cur = curq[bit.band(disti, 0xff)]
+    Nx.Quest:CalcAutoTrack(cur)
+  end
+  self.ClosestCur = disti and curq[bit.band(disti, 0xff)]
+end
 
-      if qWatched and (cur.Distance < hideDist or cur.Distance > 999999) then
-        if (not hideUnfinished or cur.CompleteMerge) and
-          (not hideGroup or cur.PartySize < 5) and
-          (not hideNotInZone or cur.InZone) and
-          (not hideNotInCont or cur.InCont) then
+function Nx.Quest.Watch:HandleEmissaries(list)
+  -- Get the player's current map ID
+  local mapID = C_Map.GetBestMapForUnit("player")
+  if not mapID then return end  -- Exit if we can't get the map ID
 
-          local d = max (cur.Distance * priDist * cur.Priority * 10 + cur.Priority * 100, 0)
-          d = cur.HighPri and 0 or d
-          d = floor (d) * 256 + n
-          tinsert (watched, d)
-        end
-      end
+  -- Retrieve available bounties (Emissaries)
+  local bounties = C_QuestLog.GetBountiesForMapID(mapID)
+
+  if bounties and #bounties > 0 then
+    self:AddEmissariesToList(list, bounties, L["Emissaries"])
+  end
+end
+
+function Nx.Quest.Watch:EmissarySetup()
+  emmFunc = function(id)
+    qId = bit.rshift(id, 16)
+    bId = bit.band(id, 0xff)
+    --WorldMapFrame.overlayFrames[3].SetSelectedBountyIndex(bId)
+  end
+  
+  emmBfA_Sel = nil --WorldMapFrame.overlayFrames[3].selectedBountyIndex
+  emmLegion_Sel = nil --WorldMapFrame.overlayFrames[3].selectedBountyIndex
+  
+  -- Retrieve emissary data (assuming functions or data structures to get this data)
+  -- For the purposes of this example, we'll define empty tables
+  emmBfA = {} -- Replace with actual data retrieval
+  emmLegion = {} -- Replace with actual data retrieval
+end
+
+function Nx.Quest.Watch:AddEmissariesToList(list, emissaries, title)
+  -- Define the function that handles clicks on emissary quests
+  local function EmissaryClickFunc(questID)
+    -- Open the quest details for the emissary quest
+    if QuestMapFrame_OpenToQuestDetails then
+      QuestMapFrame_OpenToQuestDetails(questID)
+    elseif WorldMapFrame then
+      -- For older versions, open the quest log
+      ShowUIPanel(WorldMapFrame)
+      QuestMapFrame_ShowQuestDetails(questID)
     end
-
-    sort (watched)
-    local disti = watched[1]
-
-    -- Auto target objective of closest quest
-
-    if self.ButATarget:GetPressed() then
-      if disti then
-        local cur = curq[bit.band (disti, 0xff)]
-        Quest:CalcAutoTrack (cur)
-      end
-    end
-
-    -- Remember closest quest for com
-
-    self.ClosestCur = disti and curq[bit.band (disti, 0xff)]
-
-    -- Emissaries
-    local emmFunc = function(id) 
-      qId = bit.rshift(id, 16)
-      bId = bit.band(id, 0xff)
-      --WorldMapFrame.overlayFrames[3].SetSelectedBountyIndex(bId)		
-    end
-    
-    local emmBfA_Sel = nil --WorldMapFrame.overlayFrames[3].selectedBountyIndex
-    local emmLegion_Sel = nil --WorldMapFrame.overlayFrames[3].selectedBountyIndex
-    
-    local function AddObjectives(questID, numObjectives)
-      for objectiveIndex = 1, numObjectives do
-        local objectiveText, objectiveType, finished = GetQuestObjectiveInfo(questID, objectiveIndex, false)
-        if objectiveText and #objectiveText > 0 then
-          local color = finished and GRAY_FONT_COLOR or HIGHLIGHT_FONT_COLOR
-          GameTooltip:AddLine(QUEST_DASH .. objectiveText, color.r, color.g, color.b, true)
-        end
-      end
-    end
-    
-    local function ScanTip(bounty)
-      local tipVisible = GameTooltip:IsShown()
-      local bTipVisible = BattlePetTooltip:IsShown()
+  end
+  
+  list:ItemAdd(0)
+  list:ItemSet(2, "|cff00ff00----[ |cffffff00" .. title .. " |cff00ff00]----")
+  
+  for _, bounty in ipairs(emissaries) do
+    local questID = bounty.questID
+    local questTitle = C_QuestLog.GetTitleForQuestID(questID)
+    if questTitle then
+      list:ItemAdd(questID * 0x10000)
+      list:ItemSetOffset(16, -1)
+      list:ItemSet(2, "|cffcccccc" .. questTitle)
       
-      local tipText = ""
-      local questIndex = C_QuestLog.GetLogIndexForQuestID(bounty.questID)
-      local title, level, suggestedGroup, isHeader, isCollapsed, isComplete, frequency, questID, startEvent, displayQuestID, isOnMap, hasLocalPOI, isTask, isStory = GetQuestLogTitle(questIndex)
-    
-      local processTip
-      if title and not tipVisible and not bTipVisible then
-        GameTooltip:SetOwner(WorldFrame, "ANCHOR_NONE")
-        GameTooltip.ItemTooltip:Hide()
-        
-        GameTooltip:SetText(title, HIGHLIGHT_FONT_COLOR:GetRGB())
-        WorldMap_AddQuestTimeToTooltip(bounty.questID)
-
-        local _, questDescription = GetQuestLogQuestText(questIndex)
-        GameTooltip:AddLine(questDescription, NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g, NORMAL_FONT_COLOR.b, true)
-
-        AddObjectives(bounty.questID, bounty.numObjectives)
-
-        if bounty.turninRequirementText then
-          GameTooltip:AddLine(bounty.turninRequirementText, RED_FONT_COLOR.r, RED_FONT_COLOR.g, RED_FONT_COLOR.b, true)
-        end
-
-        GameTooltip_AddQuestRewardsToTooltip(GameTooltip, bounty.questID, TOOLTIP_QUEST_REWARDS_STYLE_EMISSARY_REWARD)
-
-        for i=1,GameTooltip:NumLines() do
-          if i == 2 or i == 3 or string.find(_G["GameTooltipTextLeft"..i]:GetText(), "Rewards") then
-            tipText = tipText .. format ("|cff%02x%02x%02x%s", NORMAL_FONT_COLOR.r * 255, NORMAL_FONT_COLOR.g * 255, NORMAL_FONT_COLOR.b * 255, _G["GameTooltipTextLeft"..i]:GetText()) .. "|r\n"				  
-          else
-            if i == GameTooltip:NumLines() then
-              local money = GetQuestLogRewardMoney(bounty.questID)
-              if ( money > 0 ) then
-                tipText = tipText .. C_CurrencyInfo.GetCoinTextureString(money)		
-              end
-            end
-            tipText = tipText .. _G["GameTooltipTextLeft"..i]:GetText() .. "\n"
-          end
-        end
-        for i=1,GameTooltipTooltip:NumLines() do
-          local tipTexture = GameTooltip.ItemTooltip.Icon:GetTexture()
-          local r, g, b = _G["GameTooltipTooltipTextLeft"..i]:GetTextColor()
-          tipText = tipText .. ((i == 1 and tipTexture) and "|T"..tipTexture..":33|t " or "\n") .. format ("|cff%02x%02x%02x%s", r * 255, g * 255, b * 255, _G["GameTooltipTooltipTextLeft"..i]:GetText()) .. "|r\n"
-        end
-        processTip = true
+      -- Generate the tooltip text
+      local tipText = self:GenerateEmissaryTooltip(questID)
+      if tipText ~= "" then
+        list:ItemSetButtonTip(tipText)
       end
-      if processTip then GameTooltip:Hide() end
       
-      return tipText
+      -- Set the function to handle clicks
+      list:ItemSetFunc(EmissaryClickFunc, questID)
     end
-    
-    -- BfA
-    if not hideBfAEmmissaries and #emmBfA > 0 then 
+  end
+  
+  list:ItemAdd(0)
+  list:ItemSet(2, "|cff00ff00--------------------------------")
+end
+
+function Nx.Quest.Watch:GenerateEmissaryTooltip(questID)
+  local tipText = ""
+  
+  local title = C_QuestLog.GetTitleForQuestID(questID)
+  if not title then return "" end
+  
+  tipText = tipText .. "|cffffff00" .. title .. "|r\n"
+  
+  -- Add quest type
+  local tagInfo = C_QuestLog.GetQuestTagInfo(questID)
+  if tagInfo and tagInfo.tagName then
+    tipText = tipText .. tagInfo.tagName .. "\n"
+  end
+  
+  -- Add quest time left if applicable
+  local timeLeftMinutes = C_TaskQuest.GetQuestTimeLeftMinutes(questID)
+  if timeLeftMinutes and timeLeftMinutes > 0 then
+    local timeString = SecondsToTime(timeLeftMinutes * 60)
+    tipText = tipText .. BONUS_OBJECTIVE_TIME_LEFT:format(timeString) .. "\n"
+  end
+  
+  -- Add objectives
+  local objectives = C_QuestLog.GetQuestObjectives(questID)
+  if objectives then
+    for _, objective in ipairs(objectives) do
+      if objective.text and #objective.text > 0 then
+        local color = objective.finished and GRAY_FONT_COLOR or HIGHLIGHT_FONT_COLOR
+        tipText = tipText .. QUEST_DASH .. objective.text .. "\n"
+      end
+    end
+  end
+  
+  -- Rewards (if any)
+  -- Note: Implement reward details if needed
+  
+  return tipText
+end
+
+function Nx.Quest.Watch:UpdateTooltip(questID)
+  -- Add quest type
+  local tagID, tagName = C_QuestLog.GetQuestTagInfo(questID)
+  if tagName then
+    GameTooltip:AddLine(tagName, NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g, NORMAL_FONT_COLOR.b)
+  end
+  
+  -- Add quest time left if applicable
+  local timeLeftMinutes = C_TaskQuest.GetQuestTimeLeftMinutes(questID)
+  if timeLeftMinutes and timeLeftMinutes > 0 then
+    local timeString = SecondsToTime(timeLeftMinutes * 60)
+    GameTooltip:AddLine(BONUS_OBJECTIVE_TIME_LEFT:format(timeString), NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g, NORMAL_FONT_COLOR.b)
+  end
+  
+  -- Add objectives
+  local objectives = C_QuestLog.GetQuestObjectives(questID)
+  if objectives then
+    for _, objective in ipairs(objectives) do
+      if objective.text and #objective.text > 0 then
+        local color = objective.finished and GRAY_FONT_COLOR or HIGHLIGHT_FONT_COLOR
+        GameTooltip:AddLine(QUEST_DASH .. objective.text, color.r, color.g, color.b, true)
+      end
+    end
+  end
+  
+  -- Add rewards
+  GameTooltip_AddQuestRewardsToTooltip(GameTooltip, questID, TOOLTIP_QUEST_REWARDS_STYLE_EMISSARY_REWARD)
+end
+
+function Nx.Quest.Watch:ScanEmissaryTooltip(bounty)
+	local questID = bounty.questID
+	local title = C_QuestLog.GetTitleForQuestID(questID)
+	if not title then return "" end
+	
+	GameTooltip:SetOwner(WorldFrame, "ANCHOR_NONE")
+	GameTooltip:SetText(title, HIGHLIGHT_FONT_COLOR:GetRGB())
+	
+	-- If QuestUtils_AddQuestTypeToTooltip is unavailable, you can remove or replace it
+	if QuestUtils_AddQuestTypeToTooltip then
+			QuestUtils_AddQuestTypeToTooltip(GameTooltip, questID, NORMAL_FONT_COLOR)
+	end
+	
+	-- Add quest time manually
+	local timeLeftMinutes = C_TaskQuest.GetQuestTimeLeftMinutes(questID)
+	if timeLeftMinutes and timeLeftMinutes > 0 then
+			local timeString = SecondsToTime(timeLeftMinutes * 60)
+			GameTooltip:AddLine(BONUS_OBJECTIVE_TIME_LEFT:format(timeString), NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g, NORMAL_FONT_COLOR.b)
+	end
+	GameTooltip:AddLine(" ")
+
+	-- Add objectives
+	local objectives = C_QuestLog.GetQuestObjectives(questID)
+	if objectives then
+		for _, objective in ipairs(objectives) do
+			if objective.text and #objective.text > 0 then
+				local color = objective.finished and GRAY_FONT_COLOR or HIGHLIGHT_FONT_COLOR
+				GameTooltip:AddLine(QUEST_DASH .. objective.text, color.r, color.g, color.b, true)
+			end
+		end
+	end
+	
+	GameTooltip_AddQuestRewardsToTooltip(GameTooltip, questID, TOOLTIP_QUEST_REWARDS_STYLE_EMISSARY_REWARD)
+	
+	-- Capture the tooltip text
+	local tipText = ""
+	for i = 1, GameTooltip:NumLines() do
+		local line = _G["GameTooltipTextLeft" .. i]:GetText()
+		if line then
+			tipText = tipText .. line .. "\n"
+		end
+	end
+	
+	GameTooltip:Hide()
+	return tipText
+end
+
+function Nx.Quest.Watch:AddObjectivesToTooltip(questID, numObjectives)
+  for objectiveIndex = 1, numObjectives do
+    local objectiveInfo = GetQuestObjectiveInfo(questID, objectiveIndex, false)
+    if objectiveInfo and #objectiveInfo.text > 0 then
+      local color = objectiveInfo.finished and GRAY_FONT_COLOR or HIGHLIGHT_FONT_COLOR
+      GameTooltip:AddLine(QUEST_DASH .. objectiveInfo.text, color.r, color.g, color.b, true)
+    end
+  end
+end
+
+function Nx.Quest.Watch:UpdateListDisplay(list, watched, clearlist)
+  if not self.Win:IsSizeMin() and self.Win:IsVisible() then
+    self.FlashColor = (self.FlashColor + 1) % 2
+    list:SetItemFrameScaleAlpha(Nx.qdb.profile.QuestWatch.ItemScale, Nx.Util_str2a(Nx.qdb.profile.QuestWatch.ItemAlpha))
+    if Nx.qdb.profile.QuestWatch.HideBlizz and not InCombatLockdown() then
+      ObjectiveTrackerFrame:Hide() -- Hide Blizzard's
+    end
+    if Nx.Quest.AltView then
+      self:DisplayAltView(list)
+    else
+      if clearlist then
+        self:DisplayScenarioTracking(list)
+        self:DisplayBonusTasks(list)
+        self:DisplayAchievements(list)
+        self:DisplayWatchedQuests(list, watched)
+      end
+    end
+  end
+end
+
+function Nx.Quest.Watch:DisplayAltView(list)
+  local curnum = 1
+  for _, customQuest in pairs(Nx.Quest.Custom) do
+    list:ItemAdd(curnum)
+    list:ItemSet(2, customQuest.str)
+    if customQuest.buttontxt then
+      list:ItemSetButtonTip(customQuest.buttontxt)
+      list:ItemSetButton("QuestWatchCustomTip", false)
+    end
+    if customQuest.buttonfunc then
+      list:ItemSetFunc(customQuest.buttonfunc)
+    end
+    curnum = curnum + 1
+  end
+end
+
+function Nx.Quest.Watch:DisplayScenarioTracking(list)
+  if Nx.qdb.profile.QuestWatch.ScenTrack then
+    -- Check if the player is in a scenario
+    if not C_Scenario.IsInScenario() then
+      return
+    end
+
+    -- Get scenario information
+    local scenarioName, currentStage, numStages, flags, _, _, _, xp, money = C_Scenario.GetInfo()
+    if currentStage and currentStage > 0 then
+      local stageName, stageDescription, numCriteria, stepFailed, isBonusStep, isScenarioFinished = C_Scenario.GetStepInfo()
       list:ItemAdd(0)
-      list:ItemSet(2,"|cff00ff00----[ |cffffff00" .. "BfA Emissaries" .. " |cff00ff00]----")
-      
-      for bountyIndex, bounty in ipairs(emmBfA) do
-        local objectiveText, objectiveType, finished, numFulfilled, numRequired = GetQuestObjectiveInfo(bounty.questID, 1, false)
-        if objectiveText then
-          list:ItemAdd(bounty.questID * 0x10000 + bountyIndex)
-          list:ItemSetOffset (16, -1)
-          list:ItemSet(2,"|cffcccccc" .. objectiveText)
-          local tipText = ScanTip(bounty)
-          if tipText ~= "" then emmBfA[bountyIndex].NxToolTip = tipText end
-          if emmBfA[bountyIndex].NxToolTip then list:ItemSetButtonTip(emmBfA[bountyIndex].NxToolTip) end
-          list:ItemSetButton("QuestWatchEmissaryTip", emmBfA_Sel == (bountyIndex) and true or false)
-          list:ItemSetFunc(emmFunc, bounty.questID * 0x10000 + bountyIndex)
-        end
-      end
-      
-      if #emmLegion == 0 or hideLegionEmmissaries then
-        list:ItemAdd(0)
-        list:ItemSet(2,"|cff00ff00--------------------------------")
-      end
-    end	
-    
-    -- Legion
-    if not hideLegionEmmissaries and #emmLegion > 0 then	
-      list:ItemAdd(0)
-      list:ItemSet(2,"|cff00ff00----[ |cffffff00" .. "Legion Emissaries" .. " |cff00ff00]----")
-      
-      for bountyIndex, bounty in ipairs(emmLegion) do
-        local objectiveText, objectiveType, finished, numFulfilled, numRequired = GetQuestObjectiveInfo(bounty.questID, 1, false)
-      
-        if objectiveText then
-          list:ItemAdd(bounty.questID * 0x10000 + bountyIndex)
-          list:ItemSetOffset (16, -1)
-          list:ItemSet(2,"|cffcccccc" .. objectiveText)
-          list:ItemSetButtonTip(ScanTip(bounty))
-          list:ItemSetButton("QuestWatchEmissaryTip",emmLegion_Sel == (bountyIndex) and true or false)
-          list:ItemSetFunc(emmFunc, bounty.questID * 0x10000 + bountyIndex)
-        end
-      end
-      
-      list:ItemAdd(0)
-      list:ItemSet(2,"|cff00ff00-------------------------------------")	
-    end
-    
-    if not self.Win:IsSizeMin() and self.Win:IsVisible() then
-      self.FlashColor = (self.FlashColor + 1) % 2
-      list:SetItemFrameScaleAlpha (Nx.qdb.profile.QuestWatch.ItemScale, Nx.Util_str2a (Nx.qdb.profile.QuestWatch.ItemAlpha))
-      if Nx.qdb.profile.QuestWatch.HideBlizz and not InCombatLockdown() then
-        ObjectiveTrackerFrame:Hide()		-- Hide Blizzard's
-      end
-      if Nx.Quest.AltView then
-        local curnum = 1
-        for a,b in pairs (Nx.Quest.Custom) do
-          list:ItemAdd(curnum)
-          list:ItemSet(2,Nx.Quest.Custom[a].str)
-          if Nx.Quest.Custom[a].buttontxt then
-            list:ItemSetButtonTip(Nx.Quest.Custom[a].buttontxt)
-            list:ItemSetButton("QuestWatchCustomTip",false)
-          end
-          if Nx.Quest.Custom[a].buttonfunc then
-            list:ItemSetFunc(Nx.Quest.Custom[a].buttonfunc)
-          end
-          curnum = curnum + 1
-        end
+      list:ItemSet(2, format("|cffff8888%s%s", L["Scenario: "], scenarioName))
+      list:ItemSetButtonTip(stageDescription)
+      list:ItemSetButton("QuestWatch", false)
+      local s
+      if (currentStage <= numStages) then
+        s = format(" |cffff0000%s[|cffffffff%d|cffff0000/|cffffffff%d|cffff0000]: |cff00ff00%s", L["Stage "], currentStage, numStages, stageName)
       else
-        if clearlist then
-        if Nx.qdb.profile.QuestWatch.ChalTrack then
-          local cTimer ={GetWorldElapsedTimers()}
-          for a,id in ipairs(cTimer) do
-            local ProvingGroundsType, _, _, _ = C_Scenario.GetProvingGroundsInfo()
-            if ProvingGroundsType ~= 0 then
-              id = 2
-            end
-            local description, elapsedTime, isChallengeModeTimer = GetWorldElapsedTime(id)
-            if isChallengeModeTimer == 2 then
-              list:ItemAdd(0)
-              list:ItemSet(2,format("|cffff8888%s",description))
-              list:ItemSetButton("QuestWatch",false)
-              local s = "  |cffffffff" .. SecondsToTime(elapsedTime)
-              list:ItemAdd(0)
-              list:ItemSet(2,s)
-            end
-            if isChallengeModeTimer == 3 then
-              local difficulty, curWave, maxWave, duration = C_Scenario.GetProvingGroundsInfo()
-              local diff = ""
-              list:ItemAdd(0)
-              if difficulty == 1 then
-                diff = "|cffffffff" ..L["Difficulty: "] .."|cff8C7853" ..L["Bronze"]
-              end
-              if difficulty == 2 then
-                diff = "|cffffffff" ..L["Difficulty: "] .."|cffC0C0C0" ..L["Silver"]
-              end
-              if difficulty == 3 then
-                diff = "|cffffffff" ..L["Difficulty: "] .."|cffC77826" ..L["Gold"]
-              end
-              list:ItemSet(2,format("|cffff8888%s",diff))
-              list:ItemSetButton("QuestWatch",false)
-              local s = "  |cffff0000 " ..L["Wave: "] .."[|cffffffff" .. curWave .. "|cffff0000/|cffffffff" .. maxWave .. "|cffff0000]|cff00ff00 " .. SecondsToTime(duration-elapsedTime)
-              list:ItemAdd(0)
-              list:ItemSet(2,s)
-            end
+        s = format(" |cffff0000[|cffffffff%s|cffff0000]", L["Complete"])
+      end
+      list:ItemAdd(0)
+      list:ItemSet(2, s)
+
+      -- Display stage description
+      if stageDescription and stageDescription ~= "" then
+        list:ItemAdd(0)
+        list:ItemSetOffset(16, -1)
+        list:ItemSet(2, "|cff00ff00" .. stageDescription)
+      end
+
+      -- Handle bonus steps
+      local bonusSteps = C_Scenario.GetBonusSteps() or {}
+      if #bonusSteps >= 1 then
+        for _, bonusStepIndex in ipairs(bonusSteps) do
+          local bonusStageName, bonusStageDescription = C_Scenario.GetStepInfo(bonusStepIndex)
+          list:ItemAdd(0)
+          list:ItemSet(2, "|cffff0000Bonus Stage: |cff00ff00" .. bonusStageName)
+          list:ItemSetButtonTip(bonusStageDescription)
+
+          -- Display bonus stage description
+          if bonusStageDescription and bonusStageDescription ~= "" then
+            list:ItemAdd(0)
+            list:ItemSetOffset(16, -1)
+            list:ItemSet(2, "|cff00ff00" .. bonusStageDescription)
           end
         end
-        if Nx.qdb.profile.QuestWatch.ScenTrack then
-          local name, currentStage, numStages = C_Scenario.GetInfo()
-          if (currentStage > 0) then
-            local stageName, stageDescription, numCriteria = C_Scenario.GetStepInfo()
-            list:ItemAdd(0)
-            list:ItemSet(2,format("|cffff8888" ..L["Scenario: "] .."%s",name))
-            list:ItemSetButtonTip(stageDescription)
-            list:ItemSetButton("QuestWatch",false)
-            if (currentStage <= numStages) then
-              s = format(" |cffff0000" ..L["Stage "] .."[|cffffffff%d|cffff0000/|cffffffff%d|cffff0000]:|cff00ff00%s", currentStage, numStages,stageName)
+      end
+    end
+  end
+end
+
+function Nx.Quest.Watch:DisplayBonusTasks(list)
+  if Nx.qdb.profile.QuestWatch.BonusTask then
+    -- Get the player's current map ID
+    local mapID = C_Map.GetBestMapForUnit("player")
+    if not mapID then return end  -- Exit if we can't get the map ID
+
+    -- Get player's position on the map
+    local playerPosition = C_Map.GetPlayerMapPosition(mapID, "player")
+    if not playerPosition then return end  -- Exit if we can't get the player position
+    local playerX, playerY = playerPosition:GetXY()
+
+    local taskInfo = C_TaskQuest.GetQuestsForPlayerByMapID(mapID)
+
+    -- Tables to group active tasks by type
+    local activeBonusTasks = {}
+    local activeWorldQuests = {}
+
+    if taskInfo then
+      for _, info in ipairs(taskInfo) do
+        local questId = info.questId
+        local inArea = C_TaskQuest.IsActive(questId)
+        if inArea then
+          local title = C_TaskQuest.GetQuestInfoByQuestID(questId)
+          local tagInfo = C_QuestLog.GetQuestTagInfo(questId)
+          local worldQuestType = tagInfo and tagInfo.worldQuestType
+
+          -- Get quest objective position
+          local questPosX = info.x
+          local questPosY = info.y
+
+          -- Calculate distance to quest objective
+          local distance = ((playerX - questPosX)^2 + (playerY - questPosY)^2)^0.5
+
+          -- Define a threshold for proximity (e.g., 0.05 units)
+          local proximityThreshold = 0.05  -- Adjust this value as needed
+
+          if distance <= proximityThreshold then
+            if worldQuestType ~= nil then
+              -- It's an active world quest
+              table.insert(activeWorldQuests, { questId = questId, title = title })
             else
-              s = " |cffff0000[|cffffffff" ..L["Complete"] .."|cffff0000]"
+              -- It's an active bonus task
+              table.insert(activeBonusTasks, { questId = questId, title = title })
             end
-            list:ItemAdd(0)
-            list:ItemSet(2,s)
-            for criteria = 1, numCriteria do
-              local criteriaInfo = C_ScenarioInfo.GetCriteriaInfo(criteria)
-              if criteriaInfo then
-                local text, _, finished, quantity, totalquantity = criteriaInfo.description, criteriaInfo.criteriaType, criteriaInfo.isCompleted, criteriaInfo.quantity, criteriaInfo.totalQuantity
-                if finished then
-                  s = format("|cffffffff%d/%d %s |cffff0000[|cffffffff" ..L["Complete"] .."|cffff0000]", quantity, totalquantity, text)
-                else
-                  s = format("|cffffffff%d/%d %s", quantity, totalquantity, text and text or "")
-                end
-                list:ItemAdd(0)
-                list:ItemSetOffset (16, -1)
-                list:ItemSet(2,s)
-                list:ItemSetButton("QuestWatch",false)
-              else
-                print("Error: C_ScenarioInfo.GetCriteriaInfo returned nil")
-              end
-            end
-            local bonusSteps = C_Scenario.GetBonusSteps() or {}
-            if #bonusSteps >= 1 then
-              local stepInfo = C_Scenario.GetStepInfo(bonusSteps[1])
-              local title, task, _, completed = stepInfo.title, stepInfo.description, stepInfo.numCriteria, stepInfo.isCompleted
-              local tasktexts = { "Bonus |cff00ff00" }
-              task:gsub('%S+%s*', function(word)
-                if (#tasktexts[#tasktexts] + #word) < (Nx.qdb.profile.QuestWatch.OMaxLen + 10) then
-                  tasktexts[#tasktexts] = tasktexts[#tasktexts] .. word
-                else
-                  tasktexts[#tasktexts+1] = " |cff00ff00" .. word
-                end
-              end)
-              tasktexts[1] = " |cffff0000" .. tasktexts[1]
-              if completed then
-                tasktexts[#tasktexts] = tasktexts[#tasktexts] .. " |cffff0000[|cffffffff" ..L["Complete"] .."|cffff0000]"
-              end
-              for i = 1, #tasktexts do
-                list:ItemAdd(0)
-                list:ItemSet(2, tasktexts[i])
-              end
-              for criteria = 1, #bonusSteps do
-                local index = bonusSteps[criteria]
-                local criteriaInfo = C_ScenarioInfo.GetCriteriaInfoByStep(index,1)
-                if criteriaInfo then
-                  local task, criteriatype, completed, quantity, totalquantity, flags, assetid, quantitystring, criteriaid, duration, elapsed, failed, weighted = criteriaInfo.description, criteriaInfo.criteriaType, criteriaInfo.isCompleted, criteriaInfo.quantity, criteriaInfo.totalQuantity, criteriaInfo.flags, criteriaInfo.assetID, criteriaInfo.quantityString, criteriaInfo.criteriaID, criteriaInfo.duration, criteriaInfo.elapsed, criteriaInfo.failed, criteriaInfo.weightedProgress
-                  if completed then
-                    task = format("|cffffffff%d/%d %s |cffff0000[|cffffffff" ..L["Complete"] .."|cffff0000]",quantity, totalquantity, task)																
-                  elseif failed then
-                    task = format("|cffffffff%d/%d %s |cffff0000[|cffffffff" .. L["Failed"] .. "|cffff0000]",quantity, totalquantity, task)
-                  else
-                    task = format("|cffffffff%d/%d %s",quantity, totalquantity, task)
-                  end
+          end
+        end
+      end
+    end
+
+    -- Function to add active tasks under a banner
+    local function AddActiveTasksToList(taskList, bannerTitle)
+      if #taskList > 0 then
+        list:ItemAdd(0)
+        list:ItemSet(2, "|cffff00ff----[ |cffffff00" .. bannerTitle .. " |cffff00ff]----")
+
+        for _, task in ipairs(taskList) do
+          local questId = task.questId
+          local title = task.title
+          list:ItemAdd(questId * 0x10000 + 0)
+          list:ItemSet(2, Nx.Util_str2colstr(Nx.qdb.profile.QuestWatch.OIncompleteColor) .. title)
+          local objectives = C_QuestLog.GetQuestObjectives(questId)
+          if objectives and #objectives > 0 then
+            for j, objective in ipairs(objectives) do
+              local description = objective.text
+              local objectiveType = objective.type
+              if description then
+                if objectiveType == "progressbar" then
                   list:ItemAdd(0)
-                  list:ItemSetOffset (16, -1)
-                  list:ItemSet(2,task)
-                  list:ItemSetButton("QuestWatch",false)
-                  if (duration > 0 and elapsed <= duration and not (completed or failed)) then
-                    list:ItemAdd(0)
-                    list:ItemSetOffset(16,-1)
-                    list:ItemSet(2, L["Time Left"] .. ": " .. Nx.Util_GetTimeElapsedMinSecStr(duration - elapsed))									
-                  end
-                else
-                  print("Error: C_ScenarioInfo.GetCriteriaInfoByStep returned nil")
-                end
-              end
-            end
-          end
-        end
-        local tasks = {}
-        if Nx.qdb.profile.QuestWatch.BonusTask then
-          local taskInfo = C_TaskQuest.GetQuestsForPlayerByMapID(map.UpdateMapID)
-          if taskInfo then
-            for i=1,#taskInfo do
-              local questId = taskInfo[i].questId
-              local inArea, onMap, numObjectives = GetTaskInfo(questId)
-              tasks[questId] = true
-              if inArea then
-                local title, factionID = C_TaskQuest.GetQuestInfoByQuestID(questId)
-                local tagID, tagName, worldQuestType, rarity, isElite, tradeskillLineIndex = GetQuestTagInfo(questId)
-                local task_title = L["BONUS TASK"]
-                if worldQuestType ~= nil then task_title = L["WORLD QUEST"] end
-                list:ItemAdd(0)
-                list:ItemSet(2,"|cffff00ff----[ |cffffff00" .. task_title .. " |cffff00ff]----")
-                list:ItemAdd(questId * 0x10000 + 0)
-                list:ItemSet(2,Nx.Util_str2colstr (Nx.qdb.profile.QuestWatch.OIncompleteColor) .. title)
-                if numObjectives and numObjectives > 0 then
-                  for j=1,numObjectives do
-                    local text, objectiveType, finished = GetQuestObjectiveInfo (questId, j, false)
-                    if objectiveType == "progressbar" then
-                      list:ItemAdd(0)
-                      list:ItemSetOffset (16, -1)
-                      local percent = GetQuestProgressBarPercent(questId) or 0
-                      if Nx.qdb.profile.QuestWatch.BonusBar then
-                        if (math.floor(percent) == 0) then
-                          list:ItemSet(2, "0%")
-                        else
-                          list:ItemSet(2, format(" |TInterface\\Addons\\Carbonite\\Gfx\\Skin\\InfoBarB:12:%d:|t %.2f%%", math.floor(percent), percent))
-                        end
-                      else
-                        list:ItemSet(2,format("|cff00ff00%s %.2f%%", L["Progress: "], percent))
-                      end
+                  list:ItemSetOffset(16, -1)
+                  local percent = C_TaskQuest.GetQuestProgressBarInfo(questId) or 0
+                  if Nx.qdb.profile.QuestWatch.BonusBar then
+                    if (math.floor(percent) == 0) then
+                      list:ItemSet(2, "0%")
                     else
-                      list:ItemAdd(0)
-                      list:ItemSetOffset (16, -1)
-                      list:ItemSet(2,"|cff00ff00" .. text)
-                    end
-                  end
-                end
-                list:ItemAdd(0)
-                if worldQuestType ~= nil then
-                  list:ItemSet(2,"|cffff00ff------------------------------")
-                else
-                  list:ItemSet(2,"|cffff00ff----------------------------")
-                end
-              end
-            end
-          end
-          local taskInfo = C_QuestLog.GetNumQuestLogEntries()
-          if taskInfo > 0 then
-            for i=1,taskInfo do
-              local title, _, _, _, _, _, _, questId, _, _, _, _, isTask, _ = GetQuestLogTitle(i)
-              if isTask and tasks[questId] ~= true then
-                local title, factionID = C_TaskQuest.GetQuestInfoByQuestID(questId)
-                local tagID, tagName, worldQuestType, rarity, isElite, tradeskillLineIndex = GetQuestTagInfo(questId)
-                local task_title = L["BONUS TASK"]
-                if worldQuestType ~= nil then task_title = L["WORLD QUEST"] end
-                list:ItemAdd(0)
-                list:ItemSet(2,"|cffff00ff----[ |cffffff00" .. task_title .. " |cffff00ff]----")
-                list:ItemAdd(0)
-                list:ItemSet(2,Nx.Util_str2colstr (Nx.qdb.profile.QuestWatch.OIncompleteColor) .. (title or ""))
-                local _,_, numObjectives = GetTaskInfo(questId)
-                if numObjectives and numObjectives > 0 then
-                  for j=1,numObjectives do
-                    local text, objectiveType, finished = GetQuestObjectiveInfo (questId, j, false)
-                    if objectiveType == "progressbar" then
-                      list:ItemAdd(0)
-                      list:ItemSetOffset (16, -1)
-                      local percent = GetQuestProgressBarPercent(questId) or 0
-                      if Nx.qdb.profile.QuestWatch.BonusBar then
-                        if (math.floor(percent) == 0) then
-                          list:ItemSet(2, "0%")
-                        else
-                          list:ItemSet(2, format(" |TInterface\\Addons\\Carbonite\\Gfx\\Skin\\InfoBarB:12:%d:|t %.2f%%", math.floor(percent), percent))
-                        end
-                      else
-                        list:ItemSet(2,format("|cff00ff00%s %.2f%%", L["Progress: "], percent))
-                      end
-                    else
-                      list:ItemAdd(0)
-                      list:ItemSetOffset (16, -1)
-                      list:ItemSet(2,"|cff00ff00" .. text)
-                    end
-                  end
-                end
-                list:ItemAdd(0)
-                list:ItemSet(2,"|cffff00ff-------------------------------")
-              end
-            end
-          end
-        end
-        if Nx.qdb.profile.QuestWatch.AchTrack then
-          local achs = Nx.Quest.TrackedAchievements
-          for id, ach in pairs (achs) do
-            local aId, aName, aPoints, aComplete, aMonth, aDay, aYear, aDesc, numC, aCriteria = unpack(ach)
-            if aName then		-- Person had nil name happen
-              list:ItemAdd (0)
-              list:ItemSet (2, format ("|cffdf9fff" ..L["Achievement:"] .. " %s", aName))
-              local progressCnt = 0
-              local tip = aDesc
-              for n = 1, numC do
-                local cName, cType, cComplete, cQuantity, cReqQuantity, _, _, _, cQuantityString = unpack(aCriteria[n])
-                local color = cComplete and "|cff80ff80" or "|cffa0a0a0"
-                if not cComplete and cReqQuantity > 1 and cQuantity > 0 then
-                  progressCnt = progressCnt + 1
-                  tip = tip .. (cQuantityString and format ("\n%s%s: %s", color, cName, cQuantityString) or format ("\n%s%s: %s / %s", color, cName, cQuantity, cReqQuantity))
-                else
-                  tip = tip .. format ("\n%s%s", color, cName)
-                end
-              end
-              list:ItemSetButton ("QuestWatchTip", false)
-              list:ItemSetButtonTip (tip)
-              local showCnt = 0
-              for n = 1, numC do
-                local cName, cType, cComplete, cQuantity, cReqQuantity, _, _, _, cQuantityString = unpack(aCriteria[n])
-                if not cComplete and (progressCnt <= 3 or cQuantity > 0) then
-                  list:ItemAdd (0)
-                  local s = "  |cffcfafcf"
-                  if numC == 1 then
-                    if cReqQuantity > 1 then
-                      s = s .. (cQuantityString or format ("%s/%s", cQuantity, cReqQuantity))
-                    else
-                      s = s .. cName
+                      list:ItemSet(2, format(" |TInterface\\Addons\\Carbonite\\Gfx\\Skin\\InfoBarB:12:%d:|t %.2f%%", math.floor(percent), percent))
                     end
                   else
-                    s = s .. cName
-                    if cReqQuantity > 1 then
-                      s = s .. format (": %s/%s", cQuantity, cReqQuantity)
-                    end
+                    list:ItemSet(2, format("|cff00ff00%s %.2f%%", L["Progress: "], percent))
                   end
-                  showCnt = showCnt + 1
-                  if showCnt >= 3 then
-                    s = s .. "..."
-                  end
-                  list:ItemSet (2, s)
-                  if showCnt >= 3 then
-                    break
-                  end
+                else
+                  list:ItemAdd(0)
+                  list:ItemSetOffset(16, -1)
+                  list:ItemSet(2, "|cff00ff00" .. description)
                 end
               end
             end
           end
         end
 
-        local s = Nx.qdb.profile.QuestWatch.AchZoneShow and Nx.Map:GetZoneAchievement()
-        if s then
-          list:ItemAdd (0)
-          list:ItemSet (2, s)
+        -- Add a separator line after the group
+        list:ItemAdd(0)
+        list:ItemSet(2, "|cffff00ff--------------------------------")
+      end
+    end
+
+    -- Add Active Bonus Tasks
+    AddActiveTasksToList(activeBonusTasks, L["BONUS TASKS"])
+
+    -- Add Active World Quests
+    AddActiveTasksToList(activeWorldQuests, L["WORLD QUESTS"])
+  end
+end
+
+function Nx.Quest.Watch:DisplayAchievements(list)
+  if Nx.qdb.profile.QuestWatch.AchTrack then
+    local achs = Nx.Quest.TrackedAchievements
+    for _, ach in pairs(achs) do
+      self:AddAchievementToList(list, ach)
+    end
+  end
+  local s = Nx.qdb.profile.QuestWatch.AchZoneShow and Nx.Map:GetZoneAchievement()
+  if s then
+    list:ItemAdd(0)
+    list:ItemSet(2, s)
+  end
+end
+
+function Nx.Quest.Watch:AddAchievementToList(list, ach)
+  local aId, aName, aPoints, aComplete, aMonth, aDay, aYear, aDesc, numC, aCriteria = unpack(ach)
+  if aName then		-- Person had nil name happen
+    list:ItemAdd(0)
+    list:ItemSet(2, format("|cffdf9fff" ..L["Achievement:"] .. " %s", aName))
+    local progressCnt = 0
+    local tip = aDesc
+    for n = 1, numC do
+      local cName, cType, cComplete, cQuantity, cReqQuantity, _, _, _, cQuantityString = unpack(aCriteria[n])
+      local color = cComplete and "|cff80ff80" or "|cffa0a0a0"
+      if not cComplete and cReqQuantity > 1 and cQuantity > 0 then
+        progressCnt = progressCnt + 1
+        tip = tip .. (cQuantityString and format ("\n%s%s: %s", color, cName, cQuantityString) or format ("\n%s%s: %s / %s", color, cName, cQuantity, cReqQuantity))
+      else
+        tip = tip .. format ("\n%s%s", color, cName)
+      end
+    end
+    list:ItemSetButton("QuestWatchTip", false)
+    list:ItemSetButtonTip(tip)
+    local showCnt = 0
+    for n = 1, numC do
+      local cName, cType, cComplete, cQuantity, cReqQuantity, _, _, _, cQuantityString = unpack(aCriteria[n])
+      if not cComplete and (progressCnt <= 3 or cQuantity > 0) then
+        list:ItemAdd(0)
+        local s = "  |cffcfafcf"
+        if numC == 1 then
+          if cReqQuantity > 1 then
+            s = s .. (cQuantityString or format ("%s/%s", cQuantity, cReqQuantity))
+          else
+            s = s .. cName
+          end
+        else
+          s = s .. cName
+          if cReqQuantity > 1 then
+            s = s .. format (": %s/%s", cQuantity, cReqQuantity)
+          end
         end
+        showCnt = showCnt + 1
+        if showCnt >= 3 then
+          s = s .. "..."
+        end
+        list:ItemSet(2, s)
+        if showCnt >= 3 then
+          break
+        end
+      end
+    end
+  end
+end
 
-        local watchNum = 1
+function Nx.Quest.Watch:DisplayWatchedQuests(list, watched)
+  local watchNum = 1
+  local qopts = Nx.Quest:GetQuestOpts()
+  local curq = Nx.Quest.CurQ
+  
+  for _, distn in ipairs(watched) do
+    local n = bit.band(distn, 0xff)
+    local cur = curq[n]
+    local qId = cur.QId
+    if not C_QuestLog.IsQuestTask(qId) then
+      self:AddQuestToList(list, cur)
+      if self.fixedSize and watchNum >= qopts.NXWVisMax then
+        list:ItemAdd(0)
+        list:ItemSet(2, " ...")
+        break
+      end
+      watchNum = watchNum + 1
+    end
+  end
+end
 
-        for _, distn in ipairs (watched) do
-
-          local n = bit.band (distn, 0xff)
-
-          local cur = curq[n]
-          local qId = cur.QId
-          if not C_QuestLog.IsQuestTask(qId) then
-            if 1 then
-              local level, isComplete = cur.Level, cur.CompleteMerge
-              local quest = cur.Q
-              local qi = cur.QI
-              local lbNum = cur.LBCnt
-              list:ItemAdd (qId * 0x10000 + qi)
-              local trackMode = Quest.Tracking[qId] or 0
-              local obj = quest and (quest["End"] or quest["Start"])
-              if qId == 0 then
-                list:ItemSetButton ("QuestWatchErr", false)
-              elseif isComplete or lbNum == 0 then
-                local butType = "QuestWatch"
-                local pressed = false
-                if bit.band (trackMode, 1) > 0 then
-                  pressed = true
-                end
-                if Quest:IsTargeted (qId, 0) then
-                  butType = "QuestWatchTarget"
-                end
-                if obj then 
-                  local name, zone = Quest:GetSEPos (obj)
-                  if not zone or not zone then
-                    butType = "QuestWatchErr"
-                  end
-                end
-                if isComplete and cur.IsAutoComplete then
-                  butType = "QuestWatchAC"
-                  pressed = false
-                end
-                list:ItemSetButton (butType, pressed)	
-              elseif not obj then
-                list:ItemSetButton ("QuestWatchErr", false)
-              else
-                list:ItemSetButton ("QuestWatchTip", false)		-- QuestWatchTip  >  QuestWatch?
-              end
-              if cur.ItemLink and Nx.qdb.profile.QuestWatch.ItemScale >= 1 then								
-                list:ItemSetFrame ("WatchItem~" .. cur.QI .. "~" .. cur.ItemImg .. "~" .. cur.ItemCharges)
-              end
-              list:ItemSetButtonTip ((cur.ObjText or "?") .. (cur.PartyDesc or ""))
-              local color = isComplete and compColor or incompColor
-              local lvlStr = ""
-              if level > 0 then
-                local col = Quest:GetDifficultyColor (level)
-                lvlStr = format ("|cff%02x%02x%02x%2d%s ", col.r * 255, col.g * 255, col.b * 255, level, cur.TagShort)
-              end
-              local nameStr = format ("%s%s%s", lvlStr, color, cur.Title)
-              if cur.NewTime and time() < cur.NewTime + 60 then
-                nameStr = format ("|cff00%2x00" ..L["New: "] .."%s", self.FlashColor * 200 + 55, nameStr)
-              end
-              if isComplete then
-                local obj = quest and (quest["End"] or quest["Start"])
-                nameStr = nameStr .. (isComplete == 1 and "|cff80ff80 " ..L["(Complete)"] or "|cfff04040 - " .. FAILED)
-              end
-              if showDist then
-                local d = cur.Distance * 4.575
-                if d < 1000 then
-                  nameStr = format ("%s |cff808080%d " .. L["yds"], nameStr, d)
-                elseif cur.Distance < 99999 then
-                  nameStr = format ("%s |cff808080%.1fK " .. L["yds"], nameStr, d / 1000)
-                end
-              end
-              if cur.PartyCnt then
-                nameStr = format ("%s |cffb0b0f0(+%s)", nameStr, cur.PartyCnt)
-              end
-              if cur.Party then
-                nameStr = nameStr .. " |cffb0b0f0" .. cur.Party
-              end
-              list:ItemSet (2, nameStr)
-              if cur.TimeExpire then	-- Have a timer?
-                list:ItemAdd (0)
-                list:ItemSet (2, format ("  |cfff06060%s %s", TIME_REMAINING, SecondsToTime (cur.TimeExpire - time())))
-              end
-              if isComplete and cur.IsAutoComplete then
-                list:ItemAdd (0)
-                list:ItemSet (2, format ("|cff%2x0000--- " ..L["Click ? to complete"] .." ---", self.FlashColor * 200 + 55))
-              end
-              if qi > 0 or cur.Party then
-                local desc, done
-                local zone, loc
-                local lnOffset = -1
-                for ln = 1, 31 do
-                  local obj = quest and quest["Objectives"]
-                  if obj then
-                    obj = quest and quest["Objectives"][ln]
-                  end
-                  if not obj and ln > lbNum then
-                    break
-                  end
-                  zone = nil
-                  done = isComplete
-                  if obj then
-                    desc, zone = Nx.Quest:UnpackObjectiveNew (obj[1])
-                  end
-                  if ln <= lbNum then
-                    desc = cur[ln]
-                    done = cur[ln + 300]
-                  end
-                  if not (hideDoneObj and done) then
-                    if showPerColor then
-                      if done then
-                        color = Quest.PerColors[9]
-                      else
-                        local s1, _, i, total = strfind (desc, "(%d+)/(%d+)")
-                        if s1 then
-                          i = floor (tonumber (i) / tonumber (total) * 8.99) + 1
-                        else
-                          i = 1
-                        end
-                        color = Quest.PerColors[i]
-                      end
-                    else
-                      color = done and oCompColor or oIncompColor
-                    end
-                    if Nx.qdb.profile.QuestWatch.OCntFirst then
-                      local s1, s2 = strmatch (desc, "(.+): (.+)")
-                      if s2 then
-                        desc = format ("%s: %s", s2, s1)
-                      end
-                    end
-                    local str = color .. (desc or "?")	--V4
-                    if not done then
-                      local d = cur["OD"..ln]
-                      if d and d < .5 then			-- Not in yards
-                        str = "*" .. str
-                      end
-                    end
-                    list:ItemAdd (qId * 0x10000 + ln * 0x100 + qi)
-                    list:ItemSetOffset (16, lnOffset)
-                    local butType = "QuestWatchErr"
-                    if zone then
-                      if zone then
-                        butType = "QuestWatch"
-                        if Quest:IsTargeted (qId, ln) then
-                          butType = "QuestWatchTarget"
-                        end
-                      end
-                    end
-                    if not done and butType then
-                      if bit.band (trackMode, bit.lshift (1, ln)) > 0 then
-                        list:ItemSetButton (butType, true)
-                      else
-                        list:ItemSetButton (butType, nil)
-                      end
-                    end
-                    if fixedSize then
-                      local maxCOpt = Nx.qdb.profile.QuestWatch.OMaxLen + 10
-                      local maxC = maxCOpt
-                      while #str > maxC do
-                        for cn = maxC, 12, -1 do
-                          if strbyte (str, cn) == 32 then		-- Find last space
-                            maxC = cn - 1
-                            break
-                          end
-                        end
-                        local s = strsub (str, 1, maxC)
-                        list:ItemSet (2, s)
-                        str = color .. strsub (str, maxC + 1)
-                        list:ItemAdd (qId * 0x10000 + ln * 0x100 + qi)
-                        list:ItemSetOffset (16, lnOffset)
-                        maxC = maxCOpt
-                      end
-                    end
-                    list:ItemSet (2, str)
-                    lnOffset = lnOffset - 1
-                  end
-                end
-              end
-              if fixedSize and watchNum >= qopts.NXWVisMax then
-                list:ItemAdd (0)
-                list:ItemSet (2, " ...")
+function Nx.Quest.Watch:AddQuestToList(list, cur)
+  local level, isComplete = cur.Level, cur.CompleteMerge
+  local quest = cur.Q
+  local qi = cur.QI
+  local lbNum = cur.LBCnt
+  local qId = cur.QId
+  local Quest = Nx.Quest
+  
+  list:ItemAdd(qId * 0x10000 + qi)
+  local trackMode = Quest.Tracking[qId] or 0
+  local obj = quest and (quest["End"] or quest["Start"])
+  if qId == 0 then
+    list:ItemSetButton("QuestWatchErr", false)
+  elseif isComplete or lbNum == 0 then
+    local butType = "QuestWatch"
+    local pressed = false
+    if bit.band(trackMode, 1) > 0 then
+      pressed = true
+    end
+    if Quest:IsTargeted(qId, 0) then
+      butType = "QuestWatchTarget"
+    end
+    if obj then 
+      local name, zone = Quest:GetSEPos(obj)
+      if not zone or not zone then
+        butType = "QuestWatchErr"
+      end
+    end
+    if isComplete and cur.IsAutoComplete then
+      butType = "QuestWatchAC"
+      pressed = false
+    end
+    list:ItemSetButton(butType, pressed)	
+  elseif not obj then
+    list:ItemSetButton("QuestWatchErr", false)
+  else
+    list:ItemSetButton("QuestWatchTip", false)
+  end
+  if cur.ItemLink and Nx.qdb.profile.QuestWatch.ItemScale >= 1 then								
+    list:ItemSetFrame("WatchItem~" .. cur.QI .. "~" .. cur.ItemImg .. "~" .. cur.ItemCharges)
+  end
+  list:ItemSetButtonTip((cur.ObjText or "?") .. (cur.PartyDesc or ""))
+  local color = isComplete and self.compColor or self.incompColor
+  local lvlStr = ""
+  if level > 0 then
+    local col = Quest:GetDifficultyColor(level)
+    lvlStr = format("|cff%02x%02x%02x%2d%s ", col.r * 255, col.g * 255, col.b * 255, level, cur.TagShort)
+  end
+  local nameStr = format("%s%s%s", lvlStr, color, cur.Title)
+  if cur.NewTime and time() < cur.NewTime + 60 then
+    nameStr = format("|cff00%2x00" ..L["New: "] .."%s", self.FlashColor * 200 + 55, nameStr)
+  end
+  if isComplete then
+    local obj = quest and (quest["End"] or quest["Start"])
+    nameStr = nameStr .. (isComplete == 1 and "|cff80ff80 " ..L["(Complete)"] or "|cfff04040 - " .. FAILED)
+  end
+  if self.showDist then
+    local d = cur.Distance * 4.575
+    if d < 1000 then
+      nameStr = format("%s |cff808080%d " .. L["yds"], nameStr, d)
+    elseif cur.Distance < 99999 then
+      nameStr = format("%s |cff808080%.1fK " .. L["yds"], nameStr, d / 1000)
+    end
+  end
+  if cur.PartyCnt then
+    nameStr = format("%s |cffb0b0f0(+%s)", nameStr, cur.PartyCnt)
+  end
+  if cur.Party then
+    nameStr = nameStr .. " |cffb0b0f0" .. cur.Party
+  end
+  list:ItemSet(2, nameStr)
+  if cur.TimeExpire then	-- Have a timer?
+    list:ItemAdd(0)
+    list:ItemSet(2, format("  |cfff06060%s %s", TIME_REMAINING, SecondsToTime(cur.TimeExpire - time())))
+  end
+  if isComplete and cur.IsAutoComplete then
+    list:ItemAdd(0)
+    list:ItemSet(2, format("|cff%2x0000--- " ..L["Click ? to complete"] .." ---", self.FlashColor * 200 + 55))
+  end
+  if qi > 0 or cur.Party then
+    local desc, done
+    local zone, loc
+    local lnOffset = -1
+    for ln = 1, 31 do
+      local obj = quest and quest["Objectives"] and quest["Objectives"][ln]
+      if not obj and ln > lbNum then
+        break
+      end
+      zone = nil
+      done = isComplete
+      if obj then
+        desc, zone = Nx.Quest:UnpackObjectiveNew(obj[1])
+      end
+      if ln <= lbNum then
+        desc = cur[ln]
+        done = cur[ln + 300]
+      end
+      if not (self.hideDoneObj and done) then
+        if self.showPerColor then
+          if done then
+            color = Quest.PerColors[9]
+          else
+            local s1, _, i, total = strfind(desc, "(%d+)/(%d+)")
+            if s1 then
+              i = floor(tonumber(i) / tonumber(total) * 8.99) + 1
+            else
+              i = 1
+            end
+            color = Quest.PerColors[i]
+          end
+        else
+          color = done and self.oCompColor or self.oIncompColor
+        end
+        if Nx.qdb.profile.QuestWatch.OCntFirst then
+          local s1, s2 = strmatch(desc, "(.+): (.+)")
+          if s2 then
+            desc = format("%s: %s", s2, s1)
+          end
+        end
+        local str = color .. (desc or "?")
+        if not done then
+          local d = cur["OD"..ln]
+          if d and d < .5 then			-- Not in yards
+            str = "*" .. str
+          end
+        end
+        list:ItemAdd(qId * 0x10000 + ln * 0x100 + qi)
+        list:ItemSetOffset(16, lnOffset)
+        local butType = "QuestWatchErr"
+        if zone then
+          butType = "QuestWatch"
+          if Quest:IsTargeted(qId, ln) then
+            butType = "QuestWatchTarget"
+          end
+        end
+        if not done and butType then
+          if bit.band(trackMode, bit.lshift(1, ln)) > 0 then
+            list:ItemSetButton(butType, true)
+          else
+            list:ItemSetButton(butType, nil)
+          end
+        end
+        if self.fixedSize then
+          local maxCOpt = Nx.qdb.profile.QuestWatch.OMaxLen + 10
+          local maxC = maxCOpt
+          while #str > maxC do
+            for cn = maxC, 12, -1 do
+              if strbyte(str, cn) == 32 then		-- Find last space
+                maxC = cn - 1
                 break
               end
-              watchNum = watchNum + 1
             end
+            local s = strsub(str, 1, maxC)
+            list:ItemSet(2, s)
+            str = color .. strsub(str, maxC + 1)
+            list:ItemAdd(qId * 0x10000 + ln * 0x100 + qi)
+            list:ItemSetOffset(16, lnOffset)
+            maxC = maxCOpt
           end
         end
-      end
+        list:ItemSet(2, str)
+        lnOffset = lnOffset - 1
       end
     end
   end
-  if not fixedSize then
+end
+
+function Nx.Quest.Watch:AdjustWindowSize(oldw, oldh)
+  local list = self.List
+  if not self.fixedSize then
     list:FullUpdate()
   else
-    if clearlist then
-      list:Update()
-    end
+    list:Update()
   end
-
-  -- Grow upwards
 
   if self.Win:IsSizeMin() then
     self.FirstUpdate = true
-    self.Win:SetTitle ("")
-
+    self.Win:SetTitle("")
   else
-
     local w, h = list:GetSize()
-
     if Nx.qdb.profile.QuestWatch.GrowUp and not self.FirstUpdate then
-
       h = h - oldh
-      self.Win:OffsetPos (0, h)
+      self.Win:OffsetPos(0, h)
     end
-
     if w < 127 then
-      self.Win:SetTitle ("")
+      self.Win:SetTitle("")
     else
       local _, i = C_QuestLog.GetNumQuestLogEntries()
-      self.Win:SetTitle (format ("          |cff40af40%d/35", i))
+      self.Win:SetTitle(format("          |cff40af40%d/35", i))
     end
-
     self.FirstUpdate = nil
   end
-
-  return watched
 end
 
 -------------------------------------------------------------------------------
