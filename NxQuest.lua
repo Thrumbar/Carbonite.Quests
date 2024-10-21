@@ -8066,233 +8066,250 @@ end
 
 function Nx.Quest:FrameItems_Update (questState)
 
-	NxQuestDSCRewardTitleText:SetPoint ("TOPLEFT", "NxQuestDSC", "TOPLEFT", 0, -10)
+  NxQuestDSCRewardTitleText:SetPoint ("TOPLEFT", "NxQuestDSC", "TOPLEFT", 0, -10)
 
-	local questState = "NxQuestDSC"
-	local questItemName = "NxQuestDSCItem"
+  local questState = "NxQuestDSC"
+  local questItemName = "NxQuestDSCItem"
 
-	local numQuestRewards
-	local numQuestChoices
-	local money = GetQuestLogRewardMoney()
-	local spacerFrame = NxQuestDSCSpacerFrame
+  local numQuestRewards = GetNumQuestLogRewards()
+  local numQuestChoices = GetNumQuestLogChoices()
+  local money = GetQuestLogRewardMoney()
+  local spacerFrame = NxQuestDSCSpacerFrame
 
-	numQuestRewards = GetNumQuestLogRewards()
-	numQuestChoices = GetNumQuestLogChoices()
+  local numQuestSpellRewards = GetQuestLogRewardSpell() and 1 or 0
 
-	local numQuestSpellRewards = 0
-	if GetQuestLogRewardSpell() then
-		numQuestSpellRewards = 1
-	end
+  local totalRewards = numQuestRewards + numQuestChoices + numQuestSpellRewards
+  local material = QuestFrame_GetMaterial()
+  local questItemReceiveText = _G[questState.."ItemReceiveText"]
 
-	local totalRewards = numQuestRewards + numQuestChoices + numQuestSpellRewards
-	local material = QuestFrame_GetMaterial()
-	local questItemReceiveText = _G[QuestState.."ItemReceiveText"]
+  -- Switch-like construct for totalRewards and money
+  do
+    local switch = {
+      [true] = function()
+        _G[questState.."RewardTitleText"]:Hide()
+      end,
+      [false] = function()
+        _G[questState.."RewardTitleText"]:Show()
+        QuestFrame_SetTitleTextColor (_G[questState.."RewardTitleText"], material)
+        QuestFrame_SetAsLastShown (_G[questState.."RewardTitleText"], spacerFrame)
+      end,
+    }
+    switch[totalRewards == 0 and money == 0]()
+  end
 
-	if totalRewards == 0 and money == 0 then
-		_G[questState.."RewardTitleText"]:Hide()
-	else
-		_G[questState.."RewardTitleText"]:Show()
-		QuestFrame_SetTitleTextColor (_G[questState.."RewardTitleText"], material)
-		QuestFrame_SetAsLastShown (_G[questState.."RewardTitleText"], spacerFrame)
-	end
+  -- Switch-like construct for money display
+  do
+    local switch = {
+      [true] = function()
+        _G[questState.."MoneyFrame"]:Hide()
+      end,
+      [false] = function()
+        _G[questState.."MoneyFrame"]:Show()
+        QuestFrame_SetAsLastShown (_G[questState.."MoneyFrame"], spacerFrame)
+        MoneyFrame_Update (questState.."MoneyFrame", money)
+      end,
+    }
+    switch[money == 0]()
+  end
 
-	if money == 0 then
-		_G[questState.."MoneyFrame"]:Hide()
-	else
-		_G[questState.."MoneyFrame"]:Show()
-		QuestFrame_SetAsLastShown (_G[questState.."MoneyFrame"], spacerFrame)
-		MoneyFrame_Update (questState.."MoneyFrame", money)
-	end
+  -- Hide unused rewards
+  for n = totalRewards + 1, MAX_NUM_ITEMS do
+    _G[questItemName..n]:Hide()
+  end
 
-	-- Hide unused rewards
+  local questItem, name, texture, isTradeskillSpell, isSpellLearned, quality, isUsable, numItems = 1
+  local rewardsCount = 0
 
-	for n = totalRewards + 1, MAX_NUM_ITEMS do
-		_G[questItemName..n]:Hide()
-	end
+  -- Setup choosable rewards
+  do
+    local switch = {
+      [true] = function()
+        local itemChooseText = _G[questState.."ItemChooseText"]
+        itemChooseText:Show()
+        QuestFrame_SetTextColor (itemChooseText, material)
+        QuestFrame_SetAsLastShown (itemChooseText, spacerFrame)
 
-	local questItem, name, texture, isTradeskillSpell, isSpellLearned, quality, isUsable, numItems = 1
-	local rewardsCount = 0
+        for i = 1, numQuestChoices do
+          local index = i + rewardsCount
+          questItem = _G[questItemName..index]
+          questItem.type = "choice"
+          numItems = 1
 
-	-- Setup choosable rewards
+          name, texture, numItems, quality, isUsable = GetQuestLogChoiceInfo (i)
 
-	if numQuestChoices > 0 then
+          questItem:SetID (i)
+          questItem:Show()
+          questItem.rewardType = "item"
 
-		local itemChooseText = _G[questState.."ItemChooseText"]
-		itemChooseText:Show()
-		QuestFrame_SetTextColor (itemChooseText, material)
-		QuestFrame_SetAsLastShown (itemChooseText, spacerFrame)
+          _G[questItemName..index.."Name"]:SetText(name)
+          SetItemButtonCount (questItem, numItems)
+          SetItemButtonTexture (questItem, texture)
 
-		local index
-		local baseIndex = rewardsCount
+          if isUsable then
+            SetItemButtonTextureVertexColor (questItem, 1.0, 1.0, 1.0)
+            SetItemButtonNameFrameVertexColor (questItem, 1.0, 1.0, 1.0)
+          else
+            SetItemButtonTextureVertexColor (questItem, 0.9, 0, 0)
+            SetItemButtonNameFrameVertexColor (questItem, 0.9, 0, 0)
+          end
 
-		for i = 1, numQuestChoices do
+          local positionSwitch = {
+            [1] = function()
+              questItem:SetPoint ("TOPLEFT", itemChooseText, "BOTTOMLEFT", 0, -5)
+              QuestFrame_SetAsLastShown (questItem, spacerFrame)
+            end,
+            [0] = function()
+              if mod(i, 2) == 1 then
+                questItem:SetPoint ("TOPLEFT", questItemName..(index - 2), "BOTTOMLEFT", 0, -2)
+                QuestFrame_SetAsLastShown (questItem, spacerFrame)
+              else
+                questItem:SetPoint ("TOPLEFT", questItemName..(index - 1), "TOPRIGHT", 1, 0)
+              end
+            end,
+          }
+          positionSwitch[i == 1 and 1 or 0]()
 
-			index = i + baseIndex
-			questItem = _G[questItemName..index]
-			questItem.type = "choice"
-			numItems = 1
+          rewardsCount = rewardsCount + 1
+        end
+      end,
+      [false] = function()
+        _G[questState.."ItemChooseText"]:Hide()
+      end,
+    }
+    switch[numQuestChoices > 0]()
+  end
 
-			name, texture, numItems, quality, isUsable = GetQuestLogChoiceInfo (i)
+  -- Setup spell rewards
+  local learnSpellText = _G[questState.."SpellLearnText"]
 
-			questItem:SetID (i)
-			questItem:Show()
+  do
+    local switch = {
+      [true] = function()
+        learnSpellText:Show()
+        QuestFrame_SetTextColor (learnSpellText, material)
+        QuestFrame_SetAsLastShown (learnSpellText, spacerFrame)
 
-			-- For the tooltip
-			questItem.rewardType = "item"
+        if rewardsCount > 0 then
+          learnSpellText:SetPoint("TOPLEFT", questItemName..rewardsCount, "BOTTOMLEFT", 3, -5)
+        else
+          learnSpellText:SetPoint("TOPLEFT", questState.."RewardTitleText", "BOTTOMLEFT", 0, -5)
+        end
 
-			_G[questItemName..index.."Name"]:SetText(name)
-			SetItemButtonCount (questItem, numItems)
-			SetItemButtonTexture (questItem, texture)
+        texture, name, isTradeskillSpell, isSpellLearned = GetQuestLogRewardSpell()
 
-			if isUsable then
-				SetItemButtonTextureVertexColor (questItem, 1.0, 1.0, 1.0)
-				SetItemButtonNameFrameVertexColor (questItem, 1.0, 1.0, 1.0)
-			else
-				SetItemButtonTextureVertexColor (questItem, 0.9, 0, 0)
-				SetItemButtonNameFrameVertexColor (questItem, 0.9, 0, 0)
-			end
+        local spellTextSwitch = {
+          [1] = function() learnSpellText:SetText (REWARD_TRADESKILL_SPELL) end,
+          [2] = function() learnSpellText:SetText (REWARD_AURA) end,
+          [3] = function() learnSpellText:SetText (REWARD_SPELL) end,
+        }
 
-			if i > 1 then
+        local key = isTradeskillSpell and 1 or (not isSpellLearned and 2 or 3)
+        spellTextSwitch[key]()
 
-				if mod (i, 2) == 1 then
-					questItem:SetPoint ("TOPLEFT", questItemName..(index - 2), "BOTTOMLEFT", 0, -2)
-					QuestFrame_SetAsLastShown (questItem, spacerFrame)
+        rewardsCount = rewardsCount + 1
 
-				else
-					questItem:SetPoint ("TOPLEFT", questItemName..(index - 1), "TOPRIGHT", 1, 0)
-				end
+        questItem = _G[questItemName..rewardsCount]
+        questItem:Show()
+        questItem.rewardType = "spell"
+        SetItemButtonCount (questItem, 0)
+        SetItemButtonTexture (questItem, texture)
+        _G[questItemName..rewardsCount.."Name"]:SetText(name)
 
-			else
-				questItem:SetPoint ("TOPLEFT", itemChooseText, "BOTTOMLEFT", 0, -5)
-				QuestFrame_SetAsLastShown (questItem, spacerFrame)
-			end
+        QuestFrame_SetAsLastShown (questItem, spacerFrame)
 
-			rewardsCount = rewardsCount + 1
-		end
-	else
-		_G[questState.."ItemChooseText"]:Hide()
-	end
+        questItem:SetPoint ("TOPLEFT", learnSpellText, "BOTTOMLEFT", 0, -5)
+      end,
+      [false] = function()
+        learnSpellText:Hide()
+      end,
+    }
+    switch[numQuestSpellRewards > 0]()
+  end
 
-	-- Setup spell rewards
+  -- Setup mandatory rewards
+  do
+    local switch = {
+      [true] = function()
+        QuestFrame_SetTextColor (questItemReceiveText, material)
 
-	local learnSpellText = _G[questState.."SpellLearnText"]
+        local anchorSwitch = {
+          [1] = function()
+            questItemReceiveText:SetText (REWARD_ITEMS)
+            questItemReceiveText:SetPoint ("TOPLEFT", questItemName..rewardsCount, "BOTTOMLEFT", 3, -5)
+          end,
+          [2] = function()
+            questItemReceiveText:SetText (REWARD_ITEMS)
+            local index = numQuestChoices
+            if mod (index, 2) == 0 then
+              index = index - 1
+            end
+            questItemReceiveText:SetPoint ("TOPLEFT", questItemName..index, "BOTTOMLEFT", 3, -5)
+          end,
+          [3] = function()
+            questItemReceiveText:SetText (REWARD_ITEMS_ONLY)
+            questItemReceiveText:SetPoint ("TOPLEFT", questState.."RewardTitleText", "BOTTOMLEFT", 3, -5)
+          end,
+        }
 
-	if numQuestSpellRewards > 0 then
+        if numQuestSpellRewards > 0 then
+          anchorSwitch[1]()
+        elseif numQuestChoices > 0 then
+          anchorSwitch[2]()
+        else
+          anchorSwitch[3]()
+        end
 
-		learnSpellText:Show()
-		QuestFrame_SetTextColor (learnSpellText, material)
-		QuestFrame_SetAsLastShown (learnSpellText, spacerFrame)
+        questItemReceiveText:Show()
+        QuestFrame_SetAsLastShown (questItemReceiveText, spacerFrame)
 
-		--Anchor learnSpellText if there were choosable rewards
-		if rewardsCount > 0 then
-			learnSpellText:SetPoint("TOPLEFT", questItemName..rewardsCount, "BOTTOMLEFT", 3, -5)
-		else
-			learnSpellText:SetPoint("TOPLEFT", questState.."RewardTitleText", "BOTTOMLEFT", 0, -5)
-		end
+        for i = 1, numQuestRewards do
+          local index = i + rewardsCount
+          questItem = _G[questItemName..index]
+          questItem.type = "reward"
+          numItems = 1
 
-		texture, name, isTradeskillSpell, isSpellLearned = GetQuestLogRewardSpell()
+          name, texture, numItems, quality, isUsable = GetQuestLogRewardInfo (i)
 
-		if isTradeskillSpell then
-			learnSpellText:SetText (REWARD_TRADESKILL_SPELL)
-		elseif not isSpellLearned then
-			learnSpellText:SetText (REWARD_AURA)
-		else
-			learnSpellText:SetText (REWARD_SPELL)
-		end
+          questItem:SetID (i)
+          questItem:Show()
+          questItem.rewardType = "item"
+          _G[questItemName..index.."Name"]:SetText(name)
+          SetItemButtonCount (questItem, numItems)
+          SetItemButtonTexture (questItem, texture)
 
-		rewardsCount = rewardsCount + 1
+          if isUsable then
+            SetItemButtonTextureVertexColor (questItem, 1.0, 1.0, 1.0)
+            SetItemButtonNameFrameVertexColor (questItem, 1.0, 1.0, 1.0)
+          else
+            SetItemButtonTextureVertexColor (questItem, 0.5, 0, 0)
+            SetItemButtonNameFrameVertexColor (questItem, 1.0, 0, 0)
+          end
 
-		questItem = _G[questItemName..rewardsCount]
-		questItem:Show()
-		-- For the tooltip
-		questItem.rewardType = "spell"
-		SetItemButtonCount (questItem, 0)
-		SetItemButtonTexture (questItem, texture)
-		_G[questItemName..rewardsCount.."Name"]:SetText(name)
+          local positionSwitch = {
+            [1] = function()
+              questItem:SetPoint ("TOPLEFT", questState.."ItemReceiveText", "BOTTOMLEFT", 0, -5)
+              QuestFrame_SetAsLastShown (questItem, spacerFrame)
+            end,
+            [0] = function()
+              if mod(i, 2) == 1 then
+                questItem:SetPoint ("TOPLEFT", questItemName..(index - 2), "BOTTOMLEFT", 0, -2)
+                QuestFrame_SetAsLastShown (questItem, spacerFrame)
+              else
+                questItem:SetPoint ("TOPLEFT", questItemName..(index - 1), "TOPRIGHT", 1, 0)
+              end
+            end,
+          }
+          positionSwitch[i == 1 and 1 or 0]()
 
-		QuestFrame_SetAsLastShown (questItem, spacerFrame)
-
-		questItem:SetPoint ("TOPLEFT", learnSpellText, "BOTTOMLEFT", 0, -5)
-	else
-		learnSpellText:Hide()
-	end
-
-	-- Setup mandatory rewards
-	if numQuestRewards > 0 or money > 0 then
-
-		QuestFrame_SetTextColor (questItemReceiveText, material)
-
-		-- Anchor the reward text differently if there are choosable rewards
-		if numQuestSpellRewards > 0 then
-			questItemReceiveText:SetText (REWARD_ITEMS)
-			questItemReceiveText:SetPoint ("TOPLEFT", questItemName..rewardsCount, "BOTTOMLEFT", 3, -5)
-
-		elseif numQuestChoices > 0 then
-			questItemReceiveText:SetText (REWARD_ITEMS)
-			local index = numQuestChoices
-			if mod (index, 2) == 0 then
-				index = index - 1
-			end
-			questItemReceiveText:SetPoint ("TOPLEFT", questItemName..index, "BOTTOMLEFT", 3, -5)
-
-		else
-			questItemReceiveText:SetText (REWARD_ITEMS_ONLY)
-			questItemReceiveText:SetPoint ("TOPLEFT", questState.."RewardTitleText", "BOTTOMLEFT", 3, -5)
-		end
-
-		questItemReceiveText:Show()
-		QuestFrame_SetAsLastShown (questItemReceiveText, spacerFrame)
-
-		-- Setup mandatory rewards
-		local index
-		local baseIndex = rewardsCount
-
-		for i = 1, numQuestRewards do
-
-			index = i + baseIndex
-			questItem = _G[questItemName..index]
-			questItem.type = "reward"
-			numItems = 1
-
-			name, texture, numItems, quality, isUsable = GetQuestLogRewardInfo (i)
-
-			questItem:SetID (i)
-			questItem:Show()
-			-- For the tooltip
-			questItem.rewardType = "item"
-			_G[questItemName..index.."Name"]:SetText(name)
-			SetItemButtonCount (questItem, numItems)
-			SetItemButtonTexture (questItem, texture)
-
-			if isUsable then
-				SetItemButtonTextureVertexColor (questItem, 1.0, 1.0, 1.0)
-				SetItemButtonNameFrameVertexColor (questItem, 1.0, 1.0, 1.0)
-			else
-				SetItemButtonTextureVertexColor (questItem, 0.5, 0, 0)
-				SetItemButtonNameFrameVertexColor (questItem, 1.0, 0, 0)
-			end
-
-			if i > 1 then
-
-				if mod (i, 2) == 1 then
-					questItem:SetPoint ("TOPLEFT", questItemName..(index - 2), "BOTTOMLEFT", 0, -2)
-					QuestFrame_SetAsLastShown (questItem, spacerFrame)
-
-				else
-					questItem:SetPoint ("TOPLEFT", questItemName..(index - 1), "TOPRIGHT", 1, 0)
-				end
-
-			else
-				questItem:SetPoint ("TOPLEFT", questState.."ItemReceiveText", "BOTTOMLEFT", 0, -5)
-				QuestFrame_SetAsLastShown (questItem, spacerFrame)
-
-			end
-
-			rewardsCount = rewardsCount + 1
-		end
-	else
-		questItemReceiveText:Hide()
-	end
+          rewardsCount = rewardsCount + 1
+        end
+      end,
+      [false] = function()
+        questItemReceiveText:Hide()
+      end,
+    }
+    switch[numQuestRewards > 0 or money > 0]()
+  end
 end
 
 -------------------------------------------------------------------------------
