@@ -6915,20 +6915,35 @@ function Nx.Quest.List:Update()
 
 	-- Title
 
-	local _, i = C_QuestLog.GetNumQuestLogEntries()
+	-- Initialize quest count
+	local questCount = 0
+	-- Get total quest log entries
+	local numEntries = C_QuestLog.GetNumQuestLogEntries()
 
+	-- Loop through each quest log entry
+	for i = 1, numEntries do
+    local questInfo = C_QuestLog.GetInfo(i)
+    -- Check if quest is valid (not a header, not hidden, not a daily quest)
+    if questInfo and not questInfo.isHeader and not questInfo.isHidden and questInfo.frequency ~= Enum.QuestFrequency.Daily then
+      questCount = questCount + 1
+    end
+	end
+
+	-- Build the daily quest string
 	local dailyStr = ""
 	local dailysDone = GetDailyQuestsCompleted()
 	if Nx.qdb.profile.Quest.ShowDailyCount then
-		if dailysDone > 0 then
-			dailyStr = L["Daily Quests Completed:"] .. " |cffffffff" .. dailysDone
-		end
+    if dailysDone > 0 then
+      dailyStr = L["Daily Quests Completed:"] .. " |cffffffff" .. dailysDone
+    end
 	end
 	if Nx.qdb.profile.Quest.ShowDailyReset then
-		dailyStr = dailyStr .. "|r  " .. L["Daily reset:"] .. " |cffffffff" .. Nx.Util_GetTimeElapsedStr (GetQuestResetTime())
+    dailyStr = dailyStr .. "|r  " .. L["Daily reset:"] .. " |cffffffff" .. Nx.Util_GetTimeElapsedStr(GetQuestResetTime())
 	end
 
-	self.Win:SetTitle (format (L["Quests:"] .. " |cffffffff%d/35|r  %s", i, dailyStr))
+	-- Set the window title with the adjusted quest count
+	self.Win:SetTitle(format(L["Quests:"] .. " |cffffffff%d/35|r  %s", questCount, dailyStr))
+
 
 	-- List
 
@@ -9261,10 +9276,10 @@ function Nx.Quest.Watch:DisplayBonusTasks(list)
     end
 
     -- Add Active Bonus Tasks
-    AddActiveTasksToList(activeBonusTasks, L["BONUS TASKS"])
+    AddActiveTasksToList(activeBonusTasks, L["Bonus Tasks"])
 
     -- Add Active World Quests
-    AddActiveTasksToList(activeWorldQuests, L["WORLD QUESTS"])
+    AddActiveTasksToList(activeWorldQuests, L["World Quest"])
   end
 end
 
@@ -9537,12 +9552,22 @@ function Nx.Quest.Watch:AdjustWindowSize(oldw, oldh)
       h = h - oldh
       self.Win:OffsetPos(0, h)
     end
-    if w < 127 then
-      self.Win:SetTitle("")
-    else
-      local _, i = C_QuestLog.GetNumQuestLogEntries()
-      self.Win:SetTitle(format("          |cff40af40%d/35", i))
-    end
+		if w < 127 then
+			self.Win:SetTitle("")
+		else
+			local questCount = 0
+			local numEntries = C_QuestLog.GetNumQuestLogEntries()
+	
+			for i = 1, numEntries do
+				local info = C_QuestLog.GetInfo(i)
+				if info and not info.isHeader and not info.isHidden and info.frequency ~= Enum.QuestFrequency.Daily then
+					questCount = questCount + 1
+				end
+			end
+	
+			self.Win:SetTitle(format("          |cff40af40%d/35", questCount))
+		end
+	
     self.FirstUpdate = nil
   end
 end
